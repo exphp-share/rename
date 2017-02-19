@@ -1,0 +1,10 @@
+[package]
+name = "rename"
+version = "0.1.0"
+authors = ["Michael Lamparski <diagonaldevice@gmail.com>"]
+
+[dependencies]
+combine = "2.2"
+clap = "2.20"
+regex = "0.2.1"
+tabwriter = "1.0"
