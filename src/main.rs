@@ -10,6 +10,8 @@ mod macros;
 mod pattern;
 use pattern::{SourcePattern,TargetPattern};
 
+use ::std::io::prelude::*;
+
 // Ideas:
 //
 //  [name:*] is a glob
@@ -27,12 +29,6 @@ use pattern::{SourcePattern,TargetPattern};
 //
 // Idea: should warn on overlap between source and target
 // Idea: --color/-c to highlight wildcard matches
-
-#[derive(Debug,Clone,PartialEq,Eq,PartialOrd,Ord,Hash)]
-enum PathSources {
-	These(Vec<String>),
-	Glob,
-}
 
 fn main() {
 	use clap::{App,Arg};
@@ -53,8 +49,10 @@ fn main() {
 		;
 
 	let glob = matches.is_present("glob");
-	let dry_run = matches.is_present("dry-run");
-	let no_dry_run = matches.is_present("no-dry-run");
+	let dry_run = DryFlags {
+		maybe_not_dry: matches.is_present("no-dry-run"),
+		very_much_dry: matches.is_present("dry-run"),
+	};
 	let source = matches.value_of("source").unwrap();
 	let target = matches.value_of("target").unwrap();
 	let paths = matches.values_of("path").map(|c| c.map(|s| s.to_string()).collect::<Vec<_>>());
@@ -71,10 +69,46 @@ fn main() {
 	let source = source.unwrap_or_else(|e| panic!("In source pattern: {}", e));
 	let target = target.unwrap_or_else(|e| panic!("In target pattern: {}", e));
 
-	doit(path_sources, dry_run, no_dry_run, source, target)
+	doit(path_sources, dry_run, source, target)
 }
 
-fn doit(paths: PathSources, dry_run: bool, no_dry_run: bool, source: SourcePattern, target: TargetPattern) {
+#[derive(Debug,Clone,PartialEq,Eq,PartialOrd,Ord,Hash)]
+enum PathSources {
+	These(Vec<String>),
+	Glob,
+}
+
+#[derive(Debug,Copy,Clone,PartialEq,Eq,PartialOrd,Ord,Hash)]
+struct DryFlags {
+	maybe_not_dry: bool, // --no-dry-run
+	very_much_dry: bool, // --dry-run, which takes precedence
+}
+
+impl DryFlags {
+	fn is_dry(self) -> bool { self.very_much_dry || !self.maybe_not_dry }
+
+	fn write_advice<W:Write>(self, mut file: W) {
+		let mut say = |s| writeln!(&mut file, "{}", s).unwrap();
+
+		match (self.maybe_not_dry, self.very_much_dry) {
+			(false, false) => {
+				say("NOTICE: This was a DRY RUN!!!!!");
+				say("        If you like the results, use the -D flag to DO IT!");
+			},
+			( true,  true) => {
+				say("NOTICE: This was a DRY RUN!!!!!");
+				say("        If you like the results, remove the -d flag.");
+			},
+			(false,  true) => {
+				say("NOTICE: This was a DRY RUN!!!!! (in fact; this is the default! Forget -d!)");
+				say("        If you like the results, replace -d with -D to DO IT!");
+			},
+			_ => { /* not a dry run */ },
+		}
+	}
+}
+
+fn doit(paths: PathSources, dry_run: DryFlags, source: SourcePattern, target: TargetPattern) {
 	use ::std::borrow::Cow;
 	use ::std::io::prelude::*;
 
@@ -82,12 +116,13 @@ fn doit(paths: PathSources, dry_run: bool, no_dry_run: bool, source: SourcePatte
 		PathSources::Glob => {
 			// temp to own the PathBufs...
 			let tmp = ::glob::glob(&source.glob()).unwrap()
-				// show glob iteration errors but don't worry bout em
 				.filter_map(|x| x.map(Some).unwrap_or_else(|e|
+					// (show glob iteration errors but don't worry otherwise)
 					{ eprintln!("{}", e); None }))
 				.collect::<Vec<_>>();
 
-			// ...so that we can use the (borrowing) to_str to filter non-unicode names...
+			// ...so that we can use the (borrowing) to_str to filter non-unicode names.
+			// (because we can't match these with regexes!)
 			tmp.iter()
 				.flat_map(|b| b.to_str().or_else(||
 					{ eprintln!("Ignoring non-unicode path: {}", b.display()); None }))
@@ -112,19 +147,9 @@ fn doit(paths: PathSources, dry_run: bool, no_dry_run: bool, source: SourcePatte
 	}
 	tw.flush().unwrap();
 
-	match (dry_run, no_dry_run) {
-		(false, false) => {
-			eprintln!("NOTICE: This was a DRY RUN!!!!!");
-			eprintln!("        If you like the results, use the -D flag to DO IT!");
-		},
-		( true,  true) => {
-			eprintln!("NOTICE: This was a DRY RUN!!!!!");
-			eprintln!("        If you like the results, remove the -d flag.");
-		},
-		( true, false) => {
-			eprintln!("NOTICE: This was a DRY RUN!!!!! (in fact; this is the default! Forget -d!)");
-			eprintln!("        If you like the results, replace -d with -D to DO IT!");
-		},
-		(false,  true) => unimplemented!(),
+	if dry_run.is_dry() {
+		dry_run.write_advice(::std::io::stderr());
+	} else {
+		unimplemented!();
 	}
 }
