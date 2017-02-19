@@ -7,7 +7,7 @@ extern crate tabwriter;
 #[macro_use]
 mod macros;
 mod pattern;
-use pattern::Pattern;
+use pattern::{SourcePattern,TargetPattern};
 
 // Ideas:
 //
@@ -63,13 +63,14 @@ fn main() {
 		false => PathSources::These(paths.expect("No paths provided!")),
 	};
 
-	let source = pattern::parse(source).unwrap_or_else(|e| panic!("In source pattern: {}", e));
-	let target = pattern::parse(target).unwrap_or_else(|e| panic!("In target pattern: {}", e));
+	let (source,target) = pattern::parse(source,target);
+	let source = source.unwrap_or_else(|e| panic!("In source pattern: {}", e));
+	let target = target.unwrap_or_else(|e| panic!("In target pattern: {}", e));
 
 	doit(path_sources, dry_run, no_dry_run, source, target)
 }
 
-fn doit(paths: PathSources, dry_run: bool, no_dry_run: bool, source: Pattern, target: Pattern) {
+fn doit(paths: PathSources, dry_run: bool, no_dry_run: bool, source: SourcePattern, target: TargetPattern) {
 	use ::std::borrow::Cow;
 	use ::std::io::prelude::*;
 	let mut tw = ::tabwriter::TabWriter::new(::std::io::stdout());
@@ -77,8 +78,8 @@ fn doit(paths: PathSources, dry_run: bool, no_dry_run: bool, source: Pattern, ta
 	match paths {
 		PathSources::Glob(_) => unimplemented!(),
 		PathSources::These(paths) => {
-			let regex = regex::Regex::new(&source.source_regex()).unwrap();
-			let rep = target.target_regex();
+			let regex = source.regex();
+			let rep = target.rep();
 			for &path in &paths {
 				match regex.replace(path, rep.as_str()) {
 					Cow::Borrowed(_) => {} // No match
