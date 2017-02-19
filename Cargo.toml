@@ -6,5 +6,6 @@ authors = ["Michael Lamparski <diagonaldevice@gmail.com>"]
 [dependencies]
 combine = "2.2"
 clap = "2.20"
+glob = "0.2.11"
 regex = "0.2.1"
 tabwriter = "1.0"

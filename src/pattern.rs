@@ -59,6 +59,19 @@ impl SourcePattern {
 		out += "$";
 		::regex::Regex::new(&out).unwrap()
 	}
+
+	pub fn glob(&self) -> String {
+		use self::SourceComponent::*;
+
+		let mut out = String::new();
+		for c in &self.0 {
+			&match *c {
+				Subst(_, glob) => out += glob.glob_str(),
+				Literal(ref s) => out += &::glob::Pattern::escape(s),
+			};
+		}
+		out
+	}
 }
 
 impl TargetPattern {
@@ -97,7 +110,9 @@ macro_rules! bracket { // embed parser $p in-between two tokens (only keeping $p
 pub type Error<'a> = ::combine::ParseError<::combine::State<&'a str>>;
 pub type SourceResult<'a> = Result<SourcePattern, Error<'a>>;
 pub type TargetResult<'a> = Result<TargetPattern, Error<'a>>;
-pub fn parse<'a>(source: &'a str, target: &'a str) -> (SourceResult<'a>, TargetResult<'a>) {
+
+// NOTE: Both input lifetimes are equal to facilitate reuse of some subparsers
+pub fn parse<'a>(mut source: &'a str, mut target: &'a str) -> (SourceResult<'a>, TargetResult<'a>) {
 	use ::combine::*;
 	use ::combine::char::*;
 
@@ -108,7 +123,14 @@ pub fn parse<'a>(source: &'a str, target: &'a str) -> (SourceResult<'a>, TargetR
 	// We do both target and source in the same function for ease of organization and sharing.
 
 	// Parsers which are shared between source and target are written as closures
-	//  for the easy production of copies.
+	//  for the easy production of copies. (this is there the equal lifetime constraint arises)
+
+	// ---
+	// glob normalizes paths, so that it never outputs trailing slashes (resulting in no matches)
+	// FIXME: This is a bandaid; we need to somehow match
+	//         glob's normalization scheme in our regexes
+	source = source.trim_right_matches('/');
+	target = target.trim_right_matches('/');
 
 	// Subst
 	let subst_id = ||
@@ -121,12 +143,16 @@ pub fn parse<'a>(source: &'a str, target: &'a str) -> (SourceResult<'a>, TargetR
 			.or(just!(Glob::Glob))
 		);
 
-	let source_subst_specs = token(':').with(glob_spec)
+	let source_subst_specs =
+		token(':').with(glob_spec)
 		.or(just!(Glob::Glob));
 
-	let source_subst = bracket!('[', ']', subst_id().and(source_subst_specs))
+	let source_subst =
+		bracket!('[', ']', subst_id().and(source_subst_specs))
 		.map(|(subst, specs)| SourceComponent::Subst(subst, specs));
-	let target_subst = bracket!('[', ']', subst_id())
+
+	let target_subst =
+		bracket!('[', ']', subst_id())
 		.map(TargetComponent::Subst);
 
 	// Literal text
@@ -217,7 +243,6 @@ mod tests {
 
 	#[test]
 	fn test_target() {
-		use super::Glob::*;
 		use super::Subst::*;
 		use super::TargetComponent::*;
 		let named = |s: &'static str| Subst(Named(s.to_string()));

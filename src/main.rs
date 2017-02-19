@@ -1,5 +1,6 @@
 
 extern crate clap;
+extern crate glob;
 extern crate regex;
 extern crate combine;
 extern crate tabwriter;
@@ -28,9 +29,9 @@ use pattern::{SourcePattern,TargetPattern};
 // Idea: --color/-c to highlight wildcard matches
 
 #[derive(Debug,Clone,PartialEq,Eq,PartialOrd,Ord,Hash)]
-enum PathSources<'a> {
-	These(Vec<&'a str>),
-	Glob(Option<Vec<&'a str>>), // Note: Glob(None) is unrestricted, Glob(Some(_)) is restricted.
+enum PathSources {
+	These(Vec<String>),
+	Glob,
 }
 
 fn main() {
@@ -56,10 +57,13 @@ fn main() {
 	let no_dry_run = matches.is_present("no-dry-run");
 	let source = matches.value_of("source").unwrap();
 	let target = matches.value_of("target").unwrap();
-	let paths = matches.values_of("path").map(|c| c.collect::<Vec<_>>());
+	let paths = matches.values_of("path").map(|c| c.map(|s| s.to_string()).collect::<Vec<_>>());
 
 	let path_sources = match glob {
-		true  => PathSources::Glob(paths),
+		true  => match paths {
+			None => PathSources::Glob,
+			Some(_paths) => unimplemented!(), // Globs over restricted paths
+		},
 		false => PathSources::These(paths.expect("No paths provided!")),
 	};
 
@@ -73,22 +77,38 @@ fn main() {
 fn doit(paths: PathSources, dry_run: bool, no_dry_run: bool, source: SourcePattern, target: TargetPattern) {
 	use ::std::borrow::Cow;
 	use ::std::io::prelude::*;
-	let mut tw = ::tabwriter::TabWriter::new(::std::io::stdout());
 
-	match paths {
-		PathSources::Glob(_) => unimplemented!(),
-		PathSources::These(paths) => {
-			let regex = source.regex();
-			let rep = target.rep();
-			for &path in &paths {
-				match regex.replace(path, rep.as_str()) {
-					Cow::Borrowed(_) => {} // No match
-					Cow::Owned(s) => {
-						writeln!(tw, "mv '{}'\t'{}'", path, s).unwrap();
-					}
-				}
-			}
+	let source_paths = match paths {
+		PathSources::Glob => {
+			// temp to own the PathBufs...
+			let tmp = ::glob::glob(&source.glob()).unwrap()
+				// show glob iteration errors but don't worry bout em
+				.filter_map(|x| x.map(Some).unwrap_or_else(|e|
+					{ eprintln!("{}", e); None }))
+				.collect::<Vec<_>>();
+
+			// ...so that we can use the (borrowing) to_str to filter non-unicode names...
+			tmp.iter()
+				.flat_map(|b| b.to_str().or_else(||
+					{ eprintln!("Ignoring non-unicode path: {}", b.display()); None }))
+				.map(|s| s.to_string())
+				.collect()
 		},
+		PathSources::These(paths) => paths,
+	};
+
+	let regex = source.regex();
+	let rep = target.rep();
+
+	let mut tw = ::tabwriter::TabWriter::new(::std::io::stdout());
+	for path in &source_paths {
+		match regex.replace(path, rep.as_str()) {
+			// FIXME: should exit with nonzero code if no matches
+			Cow::Borrowed(_) => {} // Not a match
+			Cow::Owned(s) => {
+				writeln!(tw, "mv '{}'\t'{}'", path, s).unwrap();
+			}
+		}
 	}
 	tw.flush().unwrap();
 
