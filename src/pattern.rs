@@ -184,7 +184,7 @@ mod tests {
 			assert!(parse_source($input).is_err());
 		};
 		($input: expr => $($e:expr),*) => {
-			parse_source($input).unwrap_or_else(|e| panic!("{}", e));
+			unwrap_display!(parse_source($input));
 			assert_eq!(parse_source($input), Ok(SourcePattern(vec![$($e),*])));
 		};
 	}
@@ -194,7 +194,7 @@ mod tests {
 			assert!(parse_target($input).is_err());
 		};
 		($input: expr => $($e:expr),*) => {
-			parse_target($input).unwrap_or_else(|e| panic!("{}", e));
+			unwrap_display!(parse_target($input));
 			assert_eq!(parse_target($input), Ok(TargetPattern(vec![$($e),*])));
 		};
 	}
