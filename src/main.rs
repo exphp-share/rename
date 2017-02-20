@@ -46,6 +46,9 @@ fn main() {
 			.help("Actually, a dry run is the default behavior. This flag only exists to override -D (allowing you to use an alias)."))
 		.arg(Arg::from_usage("-D, --no-dry-run")
 			.help("Required to actually do anything. Also known as the DO IT flag."))
+		.arg(Arg::from_usage("-x, --command")
+			.default_value("mv")
+			.help("Set the mv command used to prefix output. e.g. --command='cp -a'"))
 		.arg(Arg::from_usage("<source> 'The pattern for input names'"))
 		.arg(Arg::from_usage("<target> 'The pattern for destination names'"))
 		.arg(Arg::from_usage("[path]... 'The files to rename. (for globs, it merely limits subtrees)'"))
@@ -59,6 +62,7 @@ fn main() {
 	};
 	let source = matches.value_of("source").unwrap();
 	let target = matches.value_of("target").unwrap();
+	let command = matches.value_of("command").unwrap();
 	let paths = matches.values_of("path").map(|c| c.map(|s| s.to_string()).collect::<Vec<_>>());
 
 	let path_sources = match glob {
@@ -73,7 +77,7 @@ fn main() {
 	let source = unwrap_display!(source, "In source pattern: {}");
 	let target = unwrap_display!(target, "In target pattern: {}");
 
-	doit(path_sources, dry_run, source, target)
+	doit(path_sources, dry_run, source, target, command)
 }
 
 #[derive(Debug,Clone,PartialEq,Eq,PartialOrd,Ord,Hash)]
@@ -112,7 +116,7 @@ impl DryFlags {
 	}
 }
 
-fn doit(paths: PathSources, dry_run: DryFlags, source: SourcePattern, target: TargetPattern) {
+fn doit(paths: PathSources, dry_run: DryFlags, source: SourcePattern, target: TargetPattern, command: &str) {
 	use ::std::path::PathBuf;
 	use ::std::collections::HashSet;
 
@@ -144,6 +148,9 @@ fn doit(paths: PathSources, dry_run: DryFlags, source: SourcePattern, target: Ta
 				replace_if_match(&regex, src, rep.as_str())
 
 				.and_then(|targ| {
+					// FIXME: It just occurred to me that readlink -f is not actually what
+					//        we want here; if the source path itself is a link, we should
+					//        move the link, not the referent. :/
 					let canon = |s: &str| ok_or_warn!(readlink_f(s), "{}: {}", s);
 
 					let cs = try_some!(canon(src));
@@ -153,7 +160,7 @@ fn doit(paths: PathSources, dry_run: DryFlags, source: SourcePattern, target: Ta
 
 			// File moved onto itself;
 			// Remove it to avoid false negatives in the source-target overlap check.
-			// FIXME I would still like to see it in the output listing...
+			// FIXME I might still like to see it in the output listing...
 			).filter(|&((ref cs, ref ct), (_, _))| cs != ct)
 
 			.collect::<Vec<((PathBuf, PathBuf), (&str, String))>>()
@@ -174,7 +181,9 @@ fn doit(paths: PathSources, dry_run: DryFlags, source: SourcePattern, target: Ta
 	// Output
 	let mut tw = ::tabwriter::TabWriter::new(::std::io::stdout());
 	for &(_, (src, ref dest)) in &entries {
-		writeln!(tw, "mv '{}'\t'{}'", src, dest).unwrap();
+		// Use the non-canonicalized paths.
+		// This is useful for e.g. flags like '--command=cp -a'.
+		writeln!(tw, "{} '{}'\t'{}'", command, src, dest).unwrap();
 	}
 	tw.flush().unwrap();
 
@@ -209,15 +218,18 @@ fn doit(paths: PathSources, dry_run: DryFlags, source: SourcePattern, target: Ta
 	if dry_run.is_dry() {
 		dry_run.write_advice(::std::io::stderr());
 	} else {
-		// ironically, doit() still does not yet "DO IT"
+		eprintln!("ERROR: --no-dry-run is not yet implemented,");
+		eprintln!("       but you can run the stdout output in a shell.");
 		unimplemented!();
 	}
 }
 
-/// is 'Some' only when the regex matches
+/// Is 'Some' only when the regex matches.
 fn replace_if_match(regex: &Regex, s: &str, rep: &str) -> Option<String> {
 	use ::std::borrow::Cow;
-	// regex.replace is documented to use Cow::Borrowed in case of no match.
+
+	// regex.replace is documented to use Cow::Borrowed strictly in the case of no match.
+	// (well, okay, I added the "strictly" part--but a man can hope, right?)
 	match regex.replace(s, rep) {
 		Cow::Borrowed(_) => None,
 		Cow::Owned(s) => Some(s),
